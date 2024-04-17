@@ -1,52 +1,31 @@
 #include <iostream>
 #include <optional>
 #include <vector>
-class Count {
-public:
-    Count (){
-        count = 1;
-    }
-    void Increase(){
-        count++;
-    }
-    void Decrease(){
-        count--;
-    }
-    int GetCount() {
-        return count;
-    }
-private:
-    int count{0};
-};
+
 template<typename T>
 class Shared {
 public:
-    Shared():ptr_(nullptr), c_(nullptr) {}
-    explicit Shared(T* ptr) : ptr_(ptr), c_(new Count()) {}
+    explicit Shared(T* ptr)
+    : ptr_(ptr)
+    , c_(new int{1})
+    , mutex_(new std::mutex)
+    {}
+
     ~Shared(){
-        if (c_ != nullptr) {
-            c_->Decrease();
-            if (c_->GetCount() == 0) {
-                delete c_;
-                delete ptr_;
-                c_ = nullptr;
-                ptr_ = nullptr;
-            }
-        }
+        Release();
     }
 
-    Shared(const Shared<T>& other) {
-        ptr_ = other.ptr_;
-        c_ = other.c_;
-        c_->Increase();
+    Shared(const Shared<T>& other) : mutex_(other.mutex_), ptr_(other.ptr_), c_(other.c_) {
+        AddRefCount();
     }
     Shared<T>& operator=(const Shared<T>& other) {
-        if (ptr_ == other.ptr_) {
-            return *this;
+        if (this != &other) {
+            Release();
+            mutex_ = other.mutex_;
+            ptr_ = other.ptr_;
+            c_ = other.c_;
+            AddRefCount();
         }
-        ptr_ = other.ptr_;
-        c_ = other.c_;
-        c_->Increase();
         return *this;
     }
     T* get() {
@@ -60,28 +39,56 @@ public:
     }
     int GetCnt() {
         if (c_ == nullptr) return 0;
-        return c_->GetCount();
+        return *c_;
+    }
+private:
+    void Release() {
+        if (mutex_ == nullptr) return;
+        bool del_flag = false;
+        {
+            std::lock_guard<std::mutex> lock(*mutex_);
+            if (c_ != nullptr) {
+                --(*c_);
+                if (*c_ == 0) {
+                    delete c_;
+                    delete ptr_;
+                    del_flag = true;
+                }
+            }
+        }
+        if (del_flag) delete mutex_;
+    }
+
+    void AddRefCount()
+    {
+        mutex_->lock();
+        ++(*c_);
+        mutex_->unlock();
     }
 
 private:
     T* ptr_;
-    Count* c_;
+    int* c_;
+    std::mutex* mutex_;
 };
 class A{
 public:
     int m_;
 };
 int main() {
-    Shared<A> p0;
+    Shared<A> p0{new A{5}};
     std::cout << p0.GetCnt()<<std::endl;
     {
-        Shared<A> p1(new A());
+        Shared<A> p1(p0);
         std::cout << p1.GetCnt()<<std::endl;
         Shared<A> p2(p1);
-        std::cout << p1.GetCnt()<<std::endl;
+        std::cout << p2.GetCnt()<<std::endl;
         p0 = p2;
         std::cout << p0.GetCnt()<<std::endl;
     }
     std::cout << p0.GetCnt()<<std::endl;
+
+    std::shared_ptr<int> p_int = std::make_shared<int>();
+    p_int.operator=(std::shared_ptr<int>());
     return 0;
 }
